@@ -7,4 +7,4 @@ if (-not (Test-Path $venvPython)) {
 }
 
 Write-Host "Launching CinderFilter Pitch-Locked Voice Lock v2..." -ForegroundColor Green
-& $venvPython "$PSScriptRoot\cinderfilter_voice_lock_v2_pitch.py"
+& $venvPython "$PSScriptRoot\cinderfilter_voice_lock_v2_pitch_saved.py"
