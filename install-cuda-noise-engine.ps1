@@ -1,10 +1,21 @@
 param(
-    [string]$AppRoot = $PSScriptRoot,
+    [string]$AppRoot = "",
     [int]$ParentPid = 0
 )
 
 $ErrorActionPreference = "Stop"
-Set-Location $AppRoot
+$ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+if ([string]::IsNullOrWhiteSpace($AppRoot)) {
+    $AppRoot = $ScriptRoot
+} else {
+    try {
+        $AppRoot = (Resolve-Path -LiteralPath $AppRoot -ErrorAction Stop).Path
+    } catch {
+        Write-Host "Ignoring malformed AppRoot argument; using installer folder." -ForegroundColor Yellow
+        $AppRoot = $ScriptRoot
+    }
+}
+Set-Location -LiteralPath $AppRoot
 $Host.UI.RawUI.WindowTitle = "CinderFilter CUDA Main Noise Engine Installer"
 
 Write-Host ""
@@ -36,7 +47,6 @@ if ($py -and (Test-Python311 $py.Source @("-3.11"))) {
     $pythonCommand = $py.Source
     $pythonPrefix = @("-3.11")
 }
-
 if (-not $pythonCommand) {
     $candidates = @(
         "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe",
@@ -50,7 +60,6 @@ if (-not $pythonCommand) {
         }
     }
 }
-
 if (-not $pythonCommand) {
     $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
     if (-not $winget) {
@@ -84,9 +93,7 @@ if (-not (Test-Path $venvPython)) {
     Write-Host "Creating the isolated CUDA noise-engine environment..." -ForegroundColor Cyan
     $venvArgs = @($pythonPrefix) + @("-m", "venv", $venv)
     & $pythonCommand @venvArgs
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not create the CUDA noise-engine virtual environment."
-    }
+    if ($LASTEXITCODE -ne 0) { throw "Could not create the CUDA noise-engine virtual environment." }
 }
 
 Write-Host "Updating pip..." -ForegroundColor Cyan
@@ -98,44 +105,37 @@ Write-Host "Installing PyTorch 2.11.0 with CUDA 12.8..." -ForegroundColor Cyan
 & $venvPython -m pip install --upgrade --force-reinstall --no-cache-dir `
     torch==2.11.0 torchaudio==2.11.0 `
     --index-url https://download.pytorch.org/whl/cu128
-if ($LASTEXITCODE -ne 0) {
-    throw "CUDA PyTorch installation failed."
-}
+if ($LASTEXITCODE -ne 0) { throw "CUDA PyTorch installation failed." }
 
 Write-Host ""
 Write-Host "Installing the official DeepFilterNet3 runtime..." -ForegroundColor Cyan
 & $venvPython -m pip install --upgrade --no-cache-dir `
     DeepFilterNet==0.5.6 DeepFilterLib==0.5.6 --no-deps
-if ($LASTEXITCODE -ne 0) {
-    throw "DeepFilterNet installation failed."
-}
-& $venvPython -m pip install --upgrade `
-    appdirs loguru requests packaging sympy numpy typing-extensions
-if ($LASTEXITCODE -ne 0) {
-    throw "DeepFilterNet support dependency installation failed."
-}
+if ($LASTEXITCODE -ne 0) { throw "DeepFilterNet installation failed." }
+& $venvPython -m pip install --upgrade --force-reinstall --no-cache-dir `
+    "numpy==1.26.4" "packaging==23.2" `
+    "appdirs==1.4.4" "loguru>=0.7,<1" "requests>=2.27,<3" `
+    "sympy>=1.6" "typing-extensions>=4.10,<5"
+if ($LASTEXITCODE -ne 0) { throw "DeepFilterNet support dependency installation failed." }
+
+Write-Host "Checking DeepFilterNet dependency compatibility..." -ForegroundColor Cyan
+& $venvPython -m pip check
+if ($LASTEXITCODE -ne 0) { throw "The CUDA noise environment still has incompatible packages." }
 
 Write-Host ""
 Write-Host "Verifying CUDA and preloading DeepFilterNet3..." -ForegroundColor Cyan
 Write-Host "The first model load may download the model checkpoint." -ForegroundColor Yellow
 $worker = Join-Path $AppRoot "cuda_noise_worker.py"
-if (-not (Test-Path $worker)) {
-    throw "Missing CUDA worker file: $worker"
-}
+if (-not (Test-Path $worker)) { throw "Missing CUDA worker file: $worker" }
 $verification = & $venvPython $worker --self-test --atten 45
-if ($LASTEXITCODE -ne 0) {
-    throw "CUDA DeepFilterNet3 self-test failed. See the error above."
-}
+if ($LASTEXITCODE -ne 0) { throw "CUDA DeepFilterNet3 self-test failed. See the error above." }
 Write-Host $verification -ForegroundColor Green
-
 try {
     $result = $verification | Select-Object -Last 1 | ConvertFrom-Json
 } catch {
     throw "CUDA noise-engine self-test returned unreadable output: $verification"
 }
-if (-not $result.ok) {
-    throw "CUDA noise-engine self-test did not produce valid audio."
-}
+if (-not $result.ok) { throw "CUDA noise-engine self-test did not produce valid audio." }
 
 $stateDir = Join-Path $env:LOCALAPPDATA "CinderFilter"
 New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
@@ -144,12 +144,8 @@ $settings = @{}
 if (Test-Path $settingsPath) {
     try {
         $loaded = Get-Content $settingsPath -Raw | ConvertFrom-Json
-        foreach ($property in $loaded.PSObject.Properties) {
-            $settings[$property.Name] = $property.Value
-        }
-    } catch {
-        Write-Host "Existing settings were unreadable; creating clean settings." -ForegroundColor Yellow
-    }
+        foreach ($property in $loaded.PSObject.Properties) { $settings[$property.Name] = $property.Value }
+    } catch { Write-Host "Existing settings were unreadable; creating clean settings." -ForegroundColor Yellow }
 }
 $settings["noise_backend"] = "CUDA"
 $settings["noise_cuda_preset"] = "Low Latency"
