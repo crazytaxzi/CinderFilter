@@ -177,6 +177,12 @@ cf.AudioEngine.start = _start
 cf.AudioEngine.stop = _stop
 cf.AudioEngine._process_loop = _process_loop
 
+# Re-export the patched base classes so extensions can import this module as a
+# stable thread-safe base without reaching through the private `cf` alias.
+AudioEngine = cf.AudioEngine
+CinderFilterApp = cf.CinderFilterApp
+main = cf.main
+
 
 if __name__ == "__main__":
     cf.main()
