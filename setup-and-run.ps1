@@ -62,4 +62,4 @@ if ($installedHash -ne $requirementsHash) {
 }
 
 Write-Host "Launching CinderFilter..." -ForegroundColor Green
-& $venvPython "$PSScriptRoot\cinderfilter.py"
+& $venvPython "$PSScriptRoot\cinderfilter_threadsafe.py"
