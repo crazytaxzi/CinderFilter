@@ -15,7 +15,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 SAMPLE_RATE = 48_000
-BLOCK_SIZE = 480  # DeepFilterNet's native 10 ms frame at 48 kHz.
+MODEL_FRAME_SIZE = 480  # DeepFilterNet internally consumes 10 ms frames at 48 kHz.
 
 
 @dataclass(frozen=True)
@@ -112,7 +112,7 @@ class AudioEngine:
             self._output_stream = sd.OutputStream(
                 device=output_device,
                 samplerate=SAMPLE_RATE,
-                blocksize=BLOCK_SIZE,
+                blocksize=0,
                 channels=self._output_channels,
                 dtype="float32",
                 latency="low",
@@ -121,7 +121,7 @@ class AudioEngine:
             self._input_stream = sd.InputStream(
                 device=input_device,
                 samplerate=SAMPLE_RATE,
-                blocksize=BLOCK_SIZE,
+                blocksize=0,
                 channels=1,
                 dtype="float32",
                 latency="low",
