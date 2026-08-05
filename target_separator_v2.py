@@ -122,6 +122,10 @@ class TargetSpeakerSeparator:
         requested = (preset.name, device_preference, strictness)
         current = (self._preset.name, self._device_preference, self._strictness)
         if self.running and requested == current and not self.fallback:
+            if not self._ready_event.wait(timeout=timeout):
+                raise RuntimeError("Voice Lock v2 model loading timed out.")
+            if self._startup_error is not None:
+                raise RuntimeError(f"Voice Lock v2 failed to initialize: {self._startup_error}")
             return
 
         self.stop()
