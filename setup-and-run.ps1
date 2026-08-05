@@ -52,7 +52,7 @@ $marker = Join-Path $PSScriptRoot ".venv\.requirements-sha256"
 $installedHash = if (Test-Path $marker) { (Get-Content $marker -Raw).Trim() } else { "" }
 
 if ($installedHash -ne $requirementsHash) {
-    Write-Host "Installing the weighted AI audio engine..." -ForegroundColor Cyan
+    Write-Host "Installing CinderFilter AI and Voice Lock runtimes..." -ForegroundColor Cyan
     & $venvPython -m pip install --upgrade pip
     & $venvPython -m pip install --requirement "$PSScriptRoot\requirements.txt"
     if ($LASTEXITCODE -ne 0) {
@@ -62,4 +62,4 @@ if ($installedHash -ne $requirementsHash) {
 }
 
 Write-Host "Launching CinderFilter..." -ForegroundColor Green
-& $venvPython "$PSScriptRoot\cinderfilter_threadsafe.py"
+& $venvPython "$PSScriptRoot\cinderfilter_voice_lock.py"
