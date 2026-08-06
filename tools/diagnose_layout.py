@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 import cinderfilter_app
 import main
-
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 def _git_head() -> str:
