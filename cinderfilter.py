@@ -49,7 +49,11 @@ class AudioEngine:
         self._worker: threading.Thread | None = None
         self._input_stream: sd.InputStream | None = None
         self._output_stream: sd.OutputStream | None = None
-        self._processor: DeepFilterNetRealtime | None = None
+        # DeepFilterNetRealtime is a PyO3 unsendable object. It must be created,
+        # used, and destroyed on the same worker thread. Never store it here.
+        self._model_ready = threading.Event()
+        self._worker_error: BaseException | None = None
+        self._atten_lim = self.STRENGTHS["Balanced"]
         self._output_channels = 2
         self._dropped_input = 0
         self._output_underruns = 0
@@ -83,22 +87,10 @@ class AudioEngine:
             raise RuntimeError("The selected output device has no playback channels.")
         self._output_channels = 2 if max_out >= 2 else 1
 
-        atten_lim = self.STRENGTHS.get(strength, self.STRENGTHS["Balanced"])
-        self.on_status("Loading DeepFilterNet model...")
-        self._processor = DeepFilterNetRealtime(
-            model_path=None,
-            atten_lim=atten_lim,
-            log_level="warn",
-            # Streaming must preserve a continuous timeline. Delay compensation is
-            # intended for files and can return short initial chunks.
-            compensate_delay=False,
-            post_filter_beta=0.0,
-        )
-
-        if int(self._processor.sample_rate) != SAMPLE_RATE:
-            raise RuntimeError(
-                f"Model requires {self._processor.sample_rate} Hz, expected {SAMPLE_RATE} Hz."
-            )
+        self._atten_lim = self.STRENGTHS.get(strength, self.STRENGTHS["Balanced"])
+        self._model_ready.clear()
+        self._worker_error = None
+        self.on_status("Loading DeepFilterNet model on AI thread...")
 
         self._running.set()
         self._worker = threading.Thread(
@@ -107,6 +99,19 @@ class AudioEngine:
             daemon=True,
         )
         self._worker.start()
+
+        # PyO3 marks DeepFilterNetRealtime as unsendable. The worker constructs it
+        # and signals us only after the model is ready on that same thread.
+        if not self._model_ready.wait(timeout=30.0):
+            self.stop()
+            raise RuntimeError("DeepFilterNet model loading timed out.")
+        if self._worker_error is not None:
+            error = self._worker_error
+            self.stop()
+            raise RuntimeError(f"DeepFilterNet failed to initialize: {error}") from error
+        if not self._running.is_set():
+            self.stop()
+            raise RuntimeError("The AI worker stopped before audio streams could start.")
 
         try:
             self._output_stream = sd.OutputStream(
@@ -161,13 +166,8 @@ class AudioEngine:
             self._worker.join(timeout=1.5)
         self._worker = None
 
-        if self._processor is not None:
-            try:
-                self._processor.close()
-            except Exception:
-                pass
-            self._processor = None
-
+        # The processor is closed by _process_loop on the worker thread that
+        # created it. Closing it here would trigger the same PyO3 thread panic.
         self._clear_queues()
         self.on_status("Stopped")
 
@@ -197,20 +197,37 @@ class AudioEngine:
                 pass
 
     def _process_loop(self) -> None:
-        assert self._processor is not None
+        processor: DeepFilterNetRealtime | None = None
         last_metrics = 0.0
 
-        while self._running.is_set():
-            try:
-                block = self._input_queue.get(timeout=0.1)
-            except queue.Empty:
-                continue
+        try:
+            # DeepFilterNetRealtime is declared unsendable by PyO3. Construct,
+            # process, and close it entirely inside this worker thread.
+            processor = DeepFilterNetRealtime(
+                model_path=None,
+                atten_lim=self._atten_lim,
+                log_level="warn",
+                # Streaming must preserve a continuous timeline. Delay
+                # compensation is intended for files and can shorten startup.
+                compensate_delay=False,
+                post_filter_beta=0.0,
+            )
+            if int(processor.sample_rate) != SAMPLE_RATE:
+                raise RuntimeError(
+                    f"Model requires {processor.sample_rate} Hz, expected {SAMPLE_RATE} Hz."
+                )
+            self._model_ready.set()
 
-            try:
+            while self._running.is_set():
+                try:
+                    block = self._input_queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+
                 if self._bypass.is_set():
                     processed = block
                 else:
-                    processed = self._processor.process_chunk(block)
+                    processed = processor.process_chunk(block)
                     processed = np.asarray(processed, dtype=np.float32).reshape(-1)
 
                 if processed.size == 0:
@@ -236,11 +253,21 @@ class AudioEngine:
                         self._output_underruns,
                     )
                     last_metrics = now
-            except Exception as exc:
-                self._last_status = f"AI processing error: {exc}"
-                self.on_status(self._last_status)
-                self._running.clear()
-                break
+        except BaseException as exc:
+            # PyO3 PanicException derives from BaseException, not necessarily
+            # Exception, so catch it explicitly and report it to the UI.
+            self._worker_error = exc
+            self._last_status = f"AI processing error: {exc}"
+            self.on_status(self._last_status)
+            self._running.clear()
+        finally:
+            # Always release the Rust object on its creator thread.
+            if processor is not None:
+                try:
+                    processor.close()
+                except BaseException:
+                    pass
+            self._model_ready.set()
 
     def _output_callback(self, outdata: np.ndarray, frames: int, _time, status) -> None:
         if status:

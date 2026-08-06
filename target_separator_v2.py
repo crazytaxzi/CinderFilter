@@ -201,6 +201,7 @@ class TargetSpeakerSeparator:
                     )
                     return None
             finally:
+                # Advance even when overloaded so memory cannot grow without bound.
                 self._input_buffer = self._input_buffer[hop_samples:]
             if not submitted:
                 break
@@ -211,6 +212,8 @@ class TargetSpeakerSeparator:
 
         needed = audio.size
         if self._output_buffer.size < needed:
+            # Initial model/chunk latency is intentional. Fail closed so another
+            # speaker is not leaked while the target extractor is priming.
             return np.zeros(needed, dtype=np.float32)
 
         output = np.ascontiguousarray(self._output_buffer[:needed], dtype=np.float32)
@@ -378,6 +381,8 @@ class TargetSpeakerSeparator:
         else:
             gain = 1.0
         if margin < 0.025:
+            # Ambiguous chunks are kept quieter, not deleted. This protects the
+            # target when both separated streams contain some of the same voice.
             gain *= 0.72
         return best, float(np.clip(gain, 0.0, 1.0))
 

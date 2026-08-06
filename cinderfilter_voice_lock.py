@@ -3,13 +3,15 @@ from __future__ import annotations
 import math
 import queue
 import threading
+import traceback
 
 import numpy as np
 import sounddevice as sd
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-import cinderfilter_threadsafe as base
+import cinderfilter_threadsafe  # applies the PyO3 thread-affinity hotfix
+import cinderfilter as base
 from voice_lock import SAMPLE_RATE, VoiceLockedAudioEngine, VoiceLockService
 
 
@@ -32,6 +34,7 @@ class VoiceLockApp(base.CinderFilterApp):
             self._thread_voice_result,
             self._thread_profile,
         )
+        # Replace the untouched base engine before any route starts.
         self.engine = VoiceLockedAudioEngine(
             self.voice_service, self._thread_status, self._thread_metrics
         )
@@ -222,6 +225,7 @@ class VoiceLockApp(base.CinderFilterApp):
         gain: float,
         similarity: float | None,
     ) -> None:
+        # Preserve the base meters/stats, then add Voice Lock telemetry.
         super()._update_metrics(input_db, output_db, dropped, underruns)
         gain_db = 20.0 * math.log10(max(gain, 1e-4))
         match = "--" if similarity is None else f"{similarity:.3f}"

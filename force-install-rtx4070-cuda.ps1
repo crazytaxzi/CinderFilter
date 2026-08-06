@@ -7,7 +7,7 @@ if (-not (Test-Path $python)) {
     throw "CinderFilter's virtual environment is missing. Run START_CINDERFILTER.bat once, then run this installer again."
 }
 
-Write-Host "" 
+Write-Host ""
 Write-Host "CinderFilter RTX 4070 CUDA Force Installer" -ForegroundColor Cyan
 Write-Host "This replaces the current PyTorch build with the official CUDA 12.8 build." -ForegroundColor Yellow
 Write-Host "The download is large. Do not close this window." -ForegroundColor Yellow
@@ -26,7 +26,6 @@ if ($nvidiaSmi) {
 
 Write-Host "Removing existing CPU or mismatched PyTorch packages..." -ForegroundColor Cyan
 & $python -m pip uninstall -y torch torchaudio torchvision
-# pip returns nonzero in some harmless partial-uninstall cases; continue to the clean install.
 
 Write-Host ""
 Write-Host "Installing PyTorch 2.11.0 + CUDA 12.8..." -ForegroundColor Cyan

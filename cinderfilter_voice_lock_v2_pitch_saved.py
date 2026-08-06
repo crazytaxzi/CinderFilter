@@ -47,8 +47,16 @@ class PersistentPitchLockApp(pitch.PitchLockV2App):
         self._refreshing_devices = True
         try:
             super().refresh_devices()
-            self._restore_device(self.input_var, self.input_choices, self._desired_input_key)
-            self._restore_device(self.output_var, self.output_choices, self._desired_output_key)
+            self._restore_device(
+                self.input_var,
+                self.input_choices,
+                self._desired_input_key,
+            )
+            self._restore_device(
+                self.output_var,
+                self.output_choices,
+                self._desired_output_key,
+            )
         finally:
             self._refreshing_devices = False
 
@@ -58,11 +66,13 @@ class PersistentPitchLockApp(pitch.PitchLockV2App):
             return
 
         desired_folded = desired_key.casefold()
+        # Prefer an exact canonical name + host API match.
         for label in choices:
             if _device_key(label).casefold() == desired_folded:
                 var.set(label)
                 return
 
+        # Fall back to endpoint-name matching if a host API label changed.
         desired_name = desired_key.split("[", 1)[0].strip().casefold()
         if desired_name:
             for label in choices:
@@ -76,14 +86,28 @@ class PersistentPitchLockApp(pitch.PitchLockV2App):
 
         self._set_allowed(self.strength_var, values.get("ai_strength"), _ALLOWED_AI_STRENGTHS)
         self.bypass_var.set(bool(values.get("bypass", False)))
-        self._set_allowed(self.voice_reduction_var, values.get("voice_reduction"), _ALLOWED_REDUCTIONS)
-        self._set_allowed(self.voice_strictness_var, values.get("voice_strictness"), _ALLOWED_STRICTNESS)
+
+        self._set_allowed(
+            self.voice_reduction_var,
+            values.get("voice_reduction"),
+            _ALLOWED_REDUCTIONS,
+        )
+        self._set_allowed(
+            self.voice_strictness_var,
+            values.get("voice_strictness"),
+            _ALLOWED_STRICTNESS,
+        )
         self._set_allowed(self.v2_preset_var, values.get("v2_preset"), _ALLOWED_V2_PRESETS)
         self._set_allowed(self.v2_device_var, values.get("v2_device"), _ALLOWED_COMPUTE)
-        self._set_allowed(self.pitch_margin_var, values.get("pitch_margin"), _ALLOWED_PITCH_MARGINS)
+        self._set_allowed(
+            self.pitch_margin_var,
+            values.get("pitch_margin"),
+            _ALLOWED_PITCH_MARGINS,
+        )
 
         has_voice = self.voice_service.has_profile
         has_pitch = self.pitch_guard.has_profile
+
         self.voice_lock_var.set(bool(values.get("voice_lock_enabled", False)) and has_voice)
         self.v2_enabled_var.set(bool(values.get("v2_enabled", False)) and has_voice)
         self.pitch_enabled_var.set(bool(values.get("pitch_enabled", True)) and has_pitch)

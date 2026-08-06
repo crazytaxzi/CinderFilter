@@ -13,6 +13,42 @@ REQUEST_HEADER = struct.Struct("<II")
 RESPONSE_HEADER = struct.Struct("<IIf")
 
 
+def install_torchaudio_backend_compat() -> None:
+    """Provide the legacy type-only module DeepFilterNet 0.5.6 imports.
+
+    TorchAudio 2.9+ removed ``torchaudio.backend``. DeepFilterNet only needs
+    ``AudioMetaData`` from that path while importing df.io; CinderFilter does
+    not use TorchAudio file I/O in the live worker.
+    """
+    try:
+        from torchaudio.backend.common import AudioMetaData as _AudioMetaData  # noqa: F401
+        return
+    except (ImportError, ModuleNotFoundError):
+        pass
+
+    import types
+    from typing import NamedTuple
+
+    import torchaudio
+
+    class AudioMetaData(NamedTuple):
+        sample_rate: int
+        num_frames: int
+        num_channels: int
+        bits_per_sample: int
+        encoding: str
+
+    backend_module = types.ModuleType("torchaudio.backend")
+    backend_module.__path__ = []  # Mark it as a package for nested imports.
+    common_module = types.ModuleType("torchaudio.backend.common")
+    common_module.AudioMetaData = AudioMetaData
+    backend_module.common = common_module
+
+    sys.modules["torchaudio.backend"] = backend_module
+    sys.modules["torchaudio.backend.common"] = common_module
+    setattr(torchaudio, "backend", backend_module)
+
+
 def build_df_state():
     from df.model import ModelParams
     from libdf import DF
@@ -28,6 +64,7 @@ def build_df_state():
 
 
 def load_model():
+    install_torchaudio_backend_compat()
     import torch
     from df.enhance import init_df
 
@@ -106,6 +143,7 @@ def self_test(atten_lim_db: float) -> int:
 def serve(pipe_name: str, auth_hex: str, atten_lim_db: float) -> int:
     model, torch = load_model()
 
+    # Warm the kernels and model download/cache before declaring readiness.
     warm = np.zeros(48_000 // 4, dtype=np.float32)
     enhance_chunk(model, torch, warm, atten_lim_db)
     torch.cuda.synchronize()

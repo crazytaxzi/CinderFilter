@@ -4,13 +4,7 @@ import cinderfilter_voice_lock_v2_pitch_saved as saved
 
 
 class SafePersistentPitchLockApp(saved.PersistentPitchLockApp):
-    """Persistent Pitch Lock app with compute-device validation.
-
-    A saved CUDA preference must never make strict mode unstartable when the
-    installed PyTorch runtime cannot access CUDA. In that case we switch the UI
-    and saved preference to Auto, which selects CPU now and can select CUDA
-    automatically after a compatible runtime is installed later.
-    """
+    """Persistent Pitch Lock app with compute-device validation."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -20,7 +14,6 @@ class SafePersistentPitchLockApp(saved.PersistentPitchLockApp):
     def _cuda_available() -> bool:
         try:
             import torch
-
             return bool(torch.cuda.is_available())
         except BaseException:
             return False

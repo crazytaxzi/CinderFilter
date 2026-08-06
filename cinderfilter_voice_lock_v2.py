@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import queue
 import threading
 import time
@@ -293,6 +294,7 @@ class VoiceLockV2App(v1.VoiceLockApp):
             if not self.voice_service.has_profile:
                 messagebox.showwarning("Voice profile missing", "Enroll your voice before using v2.")
                 return
+            # v1 stays enabled as the automatic fail-safe path.
             self.voice_lock_var.set(True)
             self._apply_voice_settings()
         self.engine.configure_v2(

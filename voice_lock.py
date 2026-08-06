@@ -11,7 +11,8 @@ from typing import Callable
 import numpy as np
 from deepfilternet_rs import DeepFilterNetRealtime
 
-import cinderfilter_threadsafe as base
+import cinderfilter_threadsafe  # applies the PyO3 thread-affinity hotfix
+import cinderfilter as base
 
 SAMPLE_RATE = 48_000
 VOICE_RATE = 16_000
@@ -262,7 +263,7 @@ class VoiceLockedAudioEngine(base.AudioEngine):
             if similarity >= threshold:
                 gain = 1.0
             elif similarity >= threshold - 0.055:
-                gain = 0.72
+                gain = 0.72  # protect uncertain/overlapping target speech
             else:
                 gain = 10.0 ** (-self._voice_reduction_db / 20.0)
             self._voice_target_gain = float(np.clip(gain, 0.003, 1.0))

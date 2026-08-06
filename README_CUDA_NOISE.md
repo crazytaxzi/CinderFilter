@@ -12,7 +12,7 @@ The CUDA model runs in an isolated Python 3.11 sidecar because the official Deep
 
 1. Copy the patch into the CinderFilter directory.
 2. Close CinderFilter.
-3. Run `INSTALL_CUDA_NOISE_ENGINE.bat` once, or click **Install / Repair CUDA Noise Engine** in the application.
+3. Run `INSTALL_CUDA_NOISE_ENGINE.bat` once.
 4. Wait for the CUDA and DeepFilterNet3 self-test to finish.
 5. Select **Noise Engine: CUDA**.
 
