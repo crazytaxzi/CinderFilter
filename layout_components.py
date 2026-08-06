@@ -13,17 +13,22 @@ from PySide6.QtWidgets import (
 from ui_components import FadeStack
 
 
+MAX_WIDGET = 16_777_215
+
+
 class FillFadeStack(FadeStack):
-    """A stacked page host that ignores hidden-page width hints and fills its slot."""
+    """Stack host that fills its layout slot and ignores hidden-page hints."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setMinimumSize(0, 0)
+        self.setMaximumSize(MAX_WIDGET, MAX_WIDGET)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.currentChanged.connect(self._schedule_fit)
 
     def addWidget(self, widget: QWidget) -> int:  # noqa: N802 - Qt API
         widget.setMinimumSize(0, 0)
+        widget.setMaximumSize(MAX_WIDGET, MAX_WIDGET)
         widget.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
         index = super().addWidget(widget)
         self._schedule_fit()
@@ -33,11 +38,7 @@ class FillFadeStack(FadeStack):
         return QSize(0, 0)
 
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt API
-        current = self.currentWidget()
-        if current is None:
-            return QSize(0, 0)
-        hint = current.sizeHint()
-        return QSize(0, max(0, hint.height()))
+        return QSize(0, 0)
 
     def _schedule_fit(self, *_args) -> None:
         QTimer.singleShot(0, self.fit_current)
@@ -46,9 +47,9 @@ class FillFadeStack(FadeStack):
         current = self.currentWidget()
         if current is None:
             return
-        current.setMinimumWidth(0)
-        current.setMaximumWidth(max(1, self.width()))
-        current.setGeometry(self.rect())
+        current.setMinimumSize(0, 0)
+        current.setMaximumSize(MAX_WIDGET, MAX_WIDGET)
+        current.setGeometry(self.contentsRect())
         current.updateGeometry()
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
@@ -57,53 +58,80 @@ class FillFadeStack(FadeStack):
 
 
 class ViewportLockedScrollArea(QScrollArea):
-    """A vertical scroll area whose page always equals the viewport width."""
+    """Vertical-only scroll area whose page is always anchored at top-left."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWidgetResizable(True)
+        # widgetResizable=True can center a page whose size hint is smaller than
+        # the viewport. We own the page geometry instead.
+        self.setWidgetResizable(False)
         self.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setMinimumSize(0, 0)
-        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
-        self.verticalScrollBar().rangeChanged.connect(self._schedule_width_sync)
+        self.setMaximumSize(MAX_WIDGET, MAX_WIDGET)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.verticalScrollBar().rangeChanged.connect(self._schedule_geometry_sync)
 
     def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt API
         return QSize(0, 0)
 
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt API
+        return QSize(0, 0)
+
     def setWidget(self, widget: QWidget) -> None:  # noqa: N802 - Qt API
         widget.setMinimumSize(0, 0)
-        widget.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.MinimumExpanding)
+        widget.setMaximumSize(MAX_WIDGET, MAX_WIDGET)
+        widget.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         super().setWidget(widget)
-        self._schedule_width_sync()
+        self._schedule_geometry_sync()
 
-    def _schedule_width_sync(self, *_args) -> None:
-        QTimer.singleShot(0, self.sync_page_width)
+    def _schedule_geometry_sync(self, *_args) -> None:
+        QTimer.singleShot(0, self.sync_page_geometry)
 
-    def sync_page_width(self) -> None:
+    def sync_page_geometry(self) -> None:
         page = self.widget()
         if page is None:
             return
-        target = max(1, self.viewport().width())
-        page.setMinimumWidth(target)
-        page.setMaximumWidth(target)
-        page.resize(target, max(page.height(), page.sizeHint().height()))
-        page.move(0, 0)
+
+        viewport = self.viewport()
+        target_width = max(1, viewport.width())
+
+        page.setMinimumWidth(0)
+        page.setMaximumWidth(MAX_WIDGET)
+        page.resize(target_width, max(1, page.sizeHint().height()))
+        if page.layout() is not None:
+            page.layout().activate()
+
+        target_height = max(viewport.height(), page.sizeHint().height())
+        page.resize(target_width, max(1, target_height))
+
+        # QScrollArea owns vertical movement. The explicit alignment and exact
+        # width guarantee that no horizontal or vertical centering can occur.
+        self.horizontalScrollBar().setRange(0, 0)
         self.horizontalScrollBar().setValue(0)
+        if self.verticalScrollBar().value() == 0:
+            page.move(0, 0)
+        else:
+            page.move(0, -self.verticalScrollBar().value())
         page.updateGeometry()
+        viewport.update()
+
+    # Backward-compatible name used by existing callers/tests.
+    def sync_page_width(self) -> None:
+        self.sync_page_geometry()
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
         super().resizeEvent(event)
-        self.sync_page_width()
+        self.sync_page_geometry()
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt API
         super().showEvent(event)
-        self._schedule_width_sync()
+        self._schedule_geometry_sync()
 
 
 class ReflowGrid(QWidget):
-    """A width-flexible grid that changes columns instead of overflowing."""
+    """Width-flexible grid that changes columns instead of overflowing."""
 
     def __init__(
         self,
@@ -121,17 +149,20 @@ class ReflowGrid(QWidget):
         self._grid.setHorizontalSpacing(spacing)
         self._grid.setVerticalSpacing(spacing)
         self.setMinimumWidth(0)
-        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Minimum)
+        self.setMaximumWidth(MAX_WIDGET)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
 
         for widget in self._widgets:
             widget.setMinimumWidth(0)
-            widget.setMaximumWidth(16_777_215)
-            widget.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            widget.setMaximumWidth(MAX_WIDGET)
+            widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
             for combo in widget.findChildren(QComboBox):
                 combo.setMinimumWidth(0)
-                combo.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+                combo.setMaximumWidth(MAX_WIDGET)
+                combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             for button in widget.findChildren(QPushButton):
                 button.setMinimumWidth(0)
+                button.setMaximumWidth(MAX_WIDGET)
 
         QTimer.singleShot(0, self._reflow)
 
@@ -188,12 +219,13 @@ class RouteReflow(QWidget):
         self._grid.setHorizontalSpacing(10)
         self._grid.setVerticalSpacing(8)
         self.setMinimumWidth(0)
-        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Minimum)
+        self.setMaximumWidth(MAX_WIDGET)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
 
         for block in (self._input, self._output):
             block.setMinimumWidth(0)
-            block.setMaximumWidth(16_777_215)
-            block.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            block.setMaximumWidth(MAX_WIDGET)
+            block.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._flow.setMinimumWidth(70)
         self._flow.setMaximumWidth(120)
         self._flow.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
