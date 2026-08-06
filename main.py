@@ -3,7 +3,7 @@ import sys
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
 
-from responsive_window import ResponsiveCinderWindow
+from cinderfilter_app import CinderFilterAppWindow
 
 
 def main():
@@ -11,7 +11,7 @@ def main():
     app.setApplicationName("CinderFilter")
     app.setStyle("Fusion")
     app.setFont(QFont("Segoe UI", 10))
-    window = ResponsiveCinderWindow()
+    window = CinderFilterAppWindow()
     window.show()
     return app.exec()
 
