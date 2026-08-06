@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import re
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
     QGridLayout,
-    QHBoxLayout,
     QLabel,
     QLayout,
     QPushButton,
@@ -33,8 +32,50 @@ from ui_components import (
 )
 
 
+class ViewportLockedScrollArea(QScrollArea):
+    """A vertical scroll area whose page can never exceed the viewport width."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWidgetResizable(True)
+        self.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.verticalScrollBar().rangeChanged.connect(self._schedule_width_sync)
+
+    def setWidget(self, widget: QWidget) -> None:  # noqa: N802 - Qt API
+        widget.setMinimumWidth(0)
+        widget.setMaximumWidth(16_777_215)
+        widget.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.MinimumExpanding)
+        super().setWidget(widget)
+        self._schedule_width_sync()
+
+    def _schedule_width_sync(self, *_args) -> None:
+        QTimer.singleShot(0, self._sync_page_width)
+
+    def _sync_page_width(self) -> None:
+        page = self.widget()
+        if page is None:
+            return
+        target = max(1, self.viewport().width())
+        page.setMinimumWidth(target)
+        page.setMaximumWidth(target)
+        if page.width() != target:
+            page.resize(target, max(page.height(), page.sizeHint().height()))
+        self.horizontalScrollBar().setValue(0)
+        page.updateGeometry()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
+        super().resizeEvent(event)
+        self._schedule_width_sync()
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt API
+        super().showEvent(event)
+        self._schedule_width_sync()
+
+
 class ReflowGrid(QWidget):
-    """A grid that changes column count instead of overflowing its viewport."""
+    """A width-flexible grid that changes columns instead of overflowing."""
 
     def __init__(
         self,
@@ -51,11 +92,27 @@ class ReflowGrid(QWidget):
         self._grid.setContentsMargins(0, 0, 0, 0)
         self._grid.setHorizontalSpacing(spacing)
         self._grid.setVerticalSpacing(spacing)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Minimum)
+
+        for widget in self._widgets:
+            widget.setMinimumWidth(0)
+            widget.setMaximumWidth(16_777_215)
+            widget.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            for combo in widget.findChildren(QComboBox):
+                combo.setMinimumWidth(0)
+                combo.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+            for button in widget.findChildren(QPushButton):
+                button.setMinimumWidth(0)
+
         QTimer.singleShot(0, self._reflow)
 
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt API
+        hint = super().minimumSizeHint()
+        return QSize(0, hint.height())
+
     def _column_count(self) -> int:
-        width = max(0, self.width())
+        width = max(0, self.contentsRect().width())
         for minimum_width, columns in self._breakpoints:
             if width >= minimum_width:
                 return columns
@@ -70,6 +127,8 @@ class ReflowGrid(QWidget):
         while self._grid.count():
             self._grid.takeAt(0)
 
+        for column in range(8):
+            self._grid.setColumnStretch(column, 0)
         for column in range(max(columns, 1)):
             self._grid.setColumnStretch(column, 1)
 
@@ -77,6 +136,72 @@ class ReflowGrid(QWidget):
             row, column = divmod(index, columns)
             self._grid.addWidget(widget, row, column)
 
+        self._grid.invalidate()
+        self.updateGeometry()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
+        super().resizeEvent(event)
+        self._reflow()
+
+
+class RouteReflow(QWidget):
+    """Two flexible route cards with a compact center signal indicator."""
+
+    def __init__(
+        self,
+        input_block: QWidget,
+        flow: QWidget,
+        output_block: QWidget,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._input = input_block
+        self._flow = flow
+        self._output = output_block
+        self._wide: bool | None = None
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setHorizontalSpacing(10)
+        self._grid.setVerticalSpacing(8)
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Minimum)
+
+        for block in (self._input, self._output):
+            block.setMinimumWidth(0)
+            block.setMaximumWidth(16_777_215)
+            block.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self._flow.setMinimumWidth(70)
+        self._flow.setMaximumWidth(150)
+        self._flow.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+        QTimer.singleShot(0, self._reflow)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt API
+        hint = super().minimumSizeHint()
+        return QSize(0, hint.height())
+
+    def _reflow(self) -> None:
+        wide = self.contentsRect().width() >= 780
+        if wide == self._wide:
+            return
+        self._wide = wide
+        while self._grid.count():
+            self._grid.takeAt(0)
+        for column in range(3):
+            self._grid.setColumnStretch(column, 0)
+
+        if wide:
+            self._grid.addWidget(self._input, 0, 0)
+            self._grid.addWidget(self._flow, 0, 1)
+            self._grid.addWidget(self._output, 0, 2)
+            self._grid.setColumnStretch(0, 1)
+            self._grid.setColumnStretch(2, 1)
+        else:
+            self._grid.addWidget(self._input, 0, 0)
+            self._grid.addWidget(self._flow, 1, 0, alignment=Qt.AlignCenter)
+            self._grid.addWidget(self._output, 2, 0)
+            self._grid.setColumnStretch(0, 1)
+
+        self._grid.invalidate()
         self.updateGeometry()
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
@@ -85,9 +210,9 @@ class ReflowGrid(QWidget):
 
 
 class ResponsiveCinderWindow(CinderWindow):
-    """Unified CinderFilter window with DPI-safe, width-responsive overview."""
+    """Unified CinderFilter window with viewport-locked responsive pages."""
 
-    SETTINGS_VERSION = 4
+    SETTINGS_VERSION = 5
 
     @staticmethod
     def _migrate_settings(raw: dict) -> dict:
@@ -99,11 +224,7 @@ class ResponsiveCinderWindow(CinderWindow):
                 original_version = 0
 
         values = CinderWindow._migrate_settings(raw)
-
-        # Earlier patch-era recovery saved CPU after CUDA installation failures.
-        # This user explicitly asked for a CUDA-focused main reducer, so migrate
-        # that legacy value once. A later explicit CPU choice is preserved.
-        if original_version < ResponsiveCinderWindow.SETTINGS_VERSION:
+        if original_version < 4:
             if str(values.get("noise_backend", "CUDA")) == "CPU":
                 values["noise_backend"] = "CUDA"
             if str(values.get("noise_cuda_preset", "Balanced")) == "Low Latency":
@@ -113,7 +234,7 @@ class ResponsiveCinderWindow(CinderWindow):
         return values
 
     def __init__(self) -> None:
-        self._responsive_sections: list[ReflowGrid] = []
+        self._responsive_sections: list[QWidget] = []
         super().__init__()
         self.setMinimumSize(980, 680)
 
@@ -125,7 +246,7 @@ class ResponsiveCinderWindow(CinderWindow):
         ):
             combo.setMinimumWidth(0)
             combo.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
-            combo.setMinimumContentsLength(12)
+            combo.setMinimumContentsLength(10)
             combo.setSizeAdjustPolicy(
                 QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
             )
@@ -142,18 +263,16 @@ class ResponsiveCinderWindow(CinderWindow):
         height = min(self.height(), available.height())
         width = max(self.minimumWidth(), width)
         height = max(self.minimumHeight(), height)
-
         x = min(max(self.x(), available.left()), available.right() - width + 1)
         y = min(max(self.y(), available.top()), available.bottom() - height + 1)
         self.setGeometry(x, y, width, height)
 
+        for scroll in self.findChildren(ViewportLockedScrollArea):
+            scroll._schedule_width_sync()
+
     def _page_scroll(self) -> tuple[QScrollArea, QVBoxLayout]:
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
+        scroll = ViewportLockedScrollArea()
         scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll.setStyleSheet(
             "QScrollArea { background:transparent; border:none; }"
             "QScrollArea > QWidget > QWidget { background:transparent; }"
@@ -165,11 +284,11 @@ class ResponsiveCinderWindow(CinderWindow):
         page = QWidget()
         page.setStyleSheet("background:transparent;")
         page.setMinimumWidth(0)
-        page.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
+        page.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.MinimumExpanding)
         layout = QVBoxLayout(page)
         layout.setContentsMargins(6, 6, 8, 8)
         layout.setSpacing(12)
-        layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
         scroll.setWidget(page)
         return scroll, layout
 
@@ -177,6 +296,8 @@ class ResponsiveCinderWindow(CinderWindow):
         scroll, layout = self._page_scroll()
 
         routing = GlowCard("Routing", PURPLE)
+        routing.setMinimumWidth(0)
+        routing.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.input_combo = DarkCombo()
         self.output_combo = DarkCombo()
         self.input_route_meter = SegmentMeter(GREEN)
@@ -197,25 +318,21 @@ class ResponsiveCinderWindow(CinderWindow):
             self.output_route_meter,
             self.output_route_db,
         )
-        flow = QLabel("━━━  ✦  ━━━")
+        flow = QLabel("━━  ✦  ━━")
         flow.setAlignment(Qt.AlignCenter)
         flow.setStyleSheet(
-            f"color:{PURPLE}; border:none; font-size:20px; font-weight:900;"
+            f"color:{PURPLE}; border:none; font-size:18px; font-weight:900;"
         )
-        flow.setMaximumHeight(44)
+        flow.setMaximumHeight(40)
 
-        route_reflow = ReflowGrid(
-            [input_block, flow, output_block],
-            ((1050, 3), (0, 1)),
-            spacing=10,
-        )
+        route_reflow = RouteReflow(input_block, flow, output_block)
         self._responsive_sections.append(route_reflow)
         routing.body.addWidget(route_reflow)
         layout.addWidget(routing)
 
         controls = ReflowGrid(
             [self._noise_card(), self._voice_card(), self._pitch_card()],
-            ((1600, 3), (900, 2), (0, 1)),
+            ((1380, 3), (760, 2), (0, 1)),
         )
         self._responsive_sections.append(controls)
         layout.addWidget(controls)
@@ -231,12 +348,14 @@ class ResponsiveCinderWindow(CinderWindow):
                 self.voice_panel,
                 self.reduction_panel,
             ],
-            ((1500, 4), (650, 2), (0, 1)),
+            ((1320, 4), (620, 2), (0, 1)),
         )
         self._responsive_sections.append(meters)
         layout.addWidget(meters)
 
         diagnostics = GlowCard("Diagnostics", PURPLE)
+        diagnostics.setMinimumWidth(0)
+        diagnostics.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.diag_gpu = DiagnosticItem("GPU Detected")
         self.diag_backend = DiagnosticItem("Backend")
         self.diag_rtf = DiagnosticItem("RTF")
@@ -257,7 +376,7 @@ class ResponsiveCinderWindow(CinderWindow):
                 self.diag_block,
                 open_diag,
             ],
-            ((1450, 7), (850, 4), (0, 2)),
+            ((1320, 7), (720, 4), (0, 2)),
         )
         self._responsive_sections.append(diagnostic_grid)
         diagnostics.body.addWidget(diagnostic_grid)
@@ -294,10 +413,8 @@ class ResponsiveCinderWindow(CinderWindow):
         elif product and ("stereo" in folded or "headphones" in folded):
             text = f"{product} — Stereo"
 
-        # Keep the current value compact. The complete endpoint identity remains
-        # available in the tooltip and Device page.
-        if len(text) > 78:
-            text = text[:75].rstrip() + "…"
+        if len(text) > 64:
+            text = text[:61].rstrip() + "…"
         return text or "Unknown device"
 
     @staticmethod
