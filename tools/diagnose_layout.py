@@ -11,7 +11,7 @@ if str(ROOT) not in sys.path:
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
-import cinderfilter_app
+import device_catalog
 import main
 
 
@@ -33,8 +33,9 @@ def _effect_name(widget) -> str:
 
 def main_diag() -> int:
     app = QApplication.instance() or QApplication([])
-    window = cinderfilter_app.CinderFilterAppWindow()
+    window = device_catalog.CinderFilterWindow()
     window.show()
+    attempts = {"count": 0}
 
     def report() -> None:
         window._sync_main_geometry()
@@ -44,10 +45,11 @@ def main_diag() -> int:
         print("CinderFilter layout diagnostic")
         print("GIT HEAD:", _git_head())
         print("MAIN FILE:", Path(main.__file__).resolve())
-        print("WINDOW FILE:", Path(cinderfilter_app.__file__).resolve())
+        print("WINDOW FILE:", Path(device_catalog.__file__).resolve())
         print("WINDOW CLASS:", type(window).__name__)
         print("STACK GRAPHICS EFFECT:", _effect_name(window.stack))
         print("PAGE GRAPHICS EFFECT:", _effect_name(window.stack.currentWidget()))
+        print("GPU DETECTION COMPLETE:", window._gpu_status is not None)
         for key, value in window.layout_measurements().items():
             print(f"{key}: {value}")
 
@@ -59,7 +61,14 @@ def main_diag() -> int:
         window.close()
         app.quit()
 
-    QTimer.singleShot(1500, report)
+    def wait_for_gpu() -> None:
+        attempts["count"] += 1
+        if window._gpu_status is None and attempts["count"] < 24:
+            QTimer.singleShot(250, wait_for_gpu)
+            return
+        report()
+
+    QTimer.singleShot(500, wait_for_gpu)
     return app.exec()
 
 
