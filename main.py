@@ -3,7 +3,7 @@ import sys
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
 
-from cinderfilter_app import CinderFilterAppWindow
+from device_catalog import CinderFilterWindow
 
 
 def main():
@@ -11,7 +11,7 @@ def main():
     app.setApplicationName("CinderFilter")
     app.setStyle("Fusion")
     app.setFont(QFont("Segoe UI", 10))
-    window = CinderFilterAppWindow()
+    window = CinderFilterWindow()
     window.show()
     return app.exec()
 
