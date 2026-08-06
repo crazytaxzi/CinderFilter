@@ -5,7 +5,7 @@ $Host.UI.RawUI.WindowTitle = "CinderFilter CUDA Noise Engine Repair"
 
 Write-Host ""
 Write-Host "CinderFilter CUDA Noise Engine Repair" -ForegroundColor Cyan
-Write-Host "Fixing DeepFilterNet 0.5.6 package compatibility without redownloading PyTorch." -ForegroundColor Yellow
+Write-Host "Fixing DeepFilterNet 0.5.6 compatibility without redownloading PyTorch." -ForegroundColor Yellow
 Write-Host ""
 
 $venvPython = Join-Path $AppRoot ".venv_cuda_noise\Scripts\python.exe"
@@ -13,7 +13,7 @@ if (-not (Test-Path -LiteralPath $venvPython)) {
     throw "The CUDA noise environment does not exist. Run INSTALL_CUDA_NOISE_ENGINE.bat instead."
 }
 
-Write-Host "Pinning DeepFilterNet-compatible NumPy and packaging versions..." -ForegroundColor Cyan
+Write-Host "Pinning DeepFilterNet-compatible runtime packages..." -ForegroundColor Cyan
 & $venvPython -m pip install --upgrade --force-reinstall --no-cache-dir `
     "numpy==1.26.4" "packaging==23.2" `
     "appdirs==1.4.4" "loguru>=0.7,<1" "requests>=2.27,<3" `
@@ -25,10 +25,15 @@ Write-Host "Ensuring DeepFilterNet 0.5.6 binaries are present..." -ForegroundCol
     DeepFilterNet==0.5.6 DeepFilterLib==0.5.6 --no-deps
 if ($LASTEXITCODE -ne 0) { throw "DeepFilterNet binary repair failed." }
 
-Write-Host "Checking installed package consistency..." -ForegroundColor Cyan
+Write-Host "Removing the optional wheel CLI package..." -ForegroundColor Cyan
+Write-Host "It is not needed to run CinderFilter and conflicts with DeepFilterNet's packaging pin." -ForegroundColor DarkGray
+& $venvPython -m pip uninstall -y wheel
+if ($LASTEXITCODE -ne 0) { throw "Could not remove the conflicting wheel package." }
+
+Write-Host "Checking installed runtime-package consistency..." -ForegroundColor Cyan
 & $venvPython -m pip check
 if ($LASTEXITCODE -ne 0) {
-    throw "The repaired CUDA noise environment still has incompatible packages."
+    throw "The repaired CUDA noise environment still has incompatible runtime packages."
 }
 
 $worker = Join-Path $AppRoot "cuda_noise_worker.py"
