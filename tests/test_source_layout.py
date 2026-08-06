@@ -17,6 +17,7 @@ def test_runtime_has_no_tkinter_dependency() -> None:
         "main.py",
         "cinderfilter_window.py",
         "responsive_window.py",
+        "layout_components.py",
         "cinderfilter_core.py",
         "voice_lock.py",
     ):
@@ -47,18 +48,25 @@ def test_ui_is_connected_not_mocked() -> None:
 def test_main_launches_responsive_window() -> None:
     main_source = (ROOT / "main.py").read_text(encoding="utf-8")
     responsive = (ROOT / "responsive_window.py").read_text(encoding="utf-8")
+    layout_components = (ROOT / "layout_components.py").read_text(encoding="utf-8")
     assert "ResponsiveCinderWindow" in main_source
-    assert "class ReflowGrid" in responsive
-    assert "class RouteReflow" in responsive
+    assert "FillFadeStack" in responsive
+    assert "class ReflowGrid" in layout_components
+    assert "class RouteReflow" in layout_components
     assert "_fit_window_to_screen" in responsive
     assert "_clean_device_name" in responsive
 
 
-def test_responsive_page_is_locked_to_viewport_width() -> None:
+def test_main_column_has_exact_remaining_width_contract() -> None:
     responsive = (ROOT / "responsive_window.py").read_text(encoding="utf-8")
-    assert "class ViewportLockedScrollArea" in responsive
-    assert "target = max(1, self.viewport().width())" in responsive
-    assert "page.setMaximumWidth(target)" in responsive
-    assert "self.horizontalScrollBar().setValue(0)" in responsive
+    layout_components = (ROOT / "layout_components.py").read_text(encoding="utf-8")
+    assert "def _available_stack_width" in responsive
+    assert "self.stack.setMinimumWidth(available)" in responsive
+    assert "self.stack.setMaximumWidth(available)" in responsive
+    assert "current.setGeometry(0, 0, available, self.stack.height())" in responsive
+    assert "class FillFadeStack" in layout_components
+    assert "return QSize(0, 0)" in layout_components
+    assert "page.move(0, 0)" in layout_components
+    assert "self.horizontalScrollBar().setValue(0)" in layout_components
     assert "QLayout.SizeConstraint.SetNoConstraint" in responsive
     assert "QLayout.SizeConstraint.SetMinimumSize" not in responsive
