@@ -26,6 +26,11 @@ def _git_head() -> str:
         return f"unavailable: {exc}"
 
 
+def _effect_name(widget) -> str:
+    effect = widget.graphicsEffect()
+    return "None" if effect is None else type(effect).__name__
+
+
 def main_diag() -> int:
     app = QApplication.instance() or QApplication([])
     window = cinderfilter_app.CinderFilterAppWindow()
@@ -41,6 +46,8 @@ def main_diag() -> int:
         print("MAIN FILE:", Path(main.__file__).resolve())
         print("WINDOW FILE:", Path(cinderfilter_app.__file__).resolve())
         print("WINDOW CLASS:", type(window).__name__)
+        print("STACK GRAPHICS EFFECT:", _effect_name(window.stack))
+        print("PAGE GRAPHICS EFFECT:", _effect_name(window.stack.currentWidget()))
         for key, value in window.layout_measurements().items():
             print(f"{key}: {value}")
 
