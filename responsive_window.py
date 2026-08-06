@@ -38,10 +38,13 @@ from ui_components import (
 )
 
 
-class ResponsiveCinderWindow(CinderWindow):
-    """Unified CinderFilter window with an exact-width main application column."""
+MAX_WIDGET = 16_777_215
 
-    SETTINGS_VERSION = 6
+
+class ResponsiveCinderWindow(CinderWindow):
+    """Unified CinderFilter window with top-left anchored responsive pages."""
+
+    SETTINGS_VERSION = 7
 
     @staticmethod
     def _migrate_settings(raw: dict) -> dict:
@@ -73,7 +76,8 @@ class ResponsiveCinderWindow(CinderWindow):
             self.device_output_combo,
         ):
             combo.setMinimumWidth(0)
-            combo.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+            combo.setMaximumWidth(MAX_WIDGET)
+            combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             combo.setMinimumContentsLength(10)
             combo.setSizeAdjustPolicy(
                 QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
@@ -83,7 +87,6 @@ class ResponsiveCinderWindow(CinderWindow):
         QTimer.singleShot(0, self._sync_main_geometry)
 
     def _build_shell(self) -> None:
-        """Build the only shell, with a stack that cannot inherit hidden-page width."""
         outer = QWidget()
         outer.setStyleSheet("background:transparent;")
         outer_layout = QVBoxLayout(outer)
@@ -158,11 +161,13 @@ class ResponsiveCinderWindow(CinderWindow):
             "color:#939CAD; border:none; padding-left:8px; font-size:10px;"
         )
         side.addWidget(version)
-        content_layout.addWidget(sidebar, 0)
+        content_layout.addWidget(sidebar, 0, Qt.AlignTop)
 
         self.stack = FillFadeStack()
         self.stack.setStyleSheet("background:transparent; border:none;")
         self.stack.setMinimumSize(0, 0)
+        self.stack.setMaximumSize(MAX_WIDGET, MAX_WIDGET)
+        self.stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         content_layout.addWidget(self.stack, 1)
         content_layout.setStretch(0, 0)
         content_layout.setStretch(1, 1)
@@ -177,39 +182,27 @@ class ResponsiveCinderWindow(CinderWindow):
         self.stack.setCurrentIndex(0)
         self.title_bar.start_button.clicked.connect(self.start_or_stop)
 
-    def _available_stack_width(self) -> int:
-        if not hasattr(self, "_content_frame"):
-            return 0
-        margins = self._content_layout.contentsMargins()
-        return max(
-            1,
-            self._content_frame.contentsRect().width()
-            - margins.left()
-            - margins.right()
-            - self.sidebar.width()
-            - self._content_layout.spacing(),
-        )
-
     def _sync_main_geometry(self) -> None:
         if not hasattr(self, "stack"):
             return
-        available = self._available_stack_width()
-        if available <= 1:
-            return
 
-        self.stack.setMinimumWidth(available)
-        self.stack.setMaximumWidth(available)
-        self.stack.resize(available, self.stack.height())
+        # Let QHBoxLayout own the width. Fixed min/max widths created the empty
+        # strip before the page on narrower windows.
+        self.stack.setMinimumSize(0, 0)
+        self.stack.setMaximumSize(MAX_WIDGET, MAX_WIDGET)
+        self.stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._content_layout.invalidate()
+        self._content_layout.activate()
         self.stack.fit_current()
 
         current = self.stack.currentWidget()
         if current is not None:
-            current.setMinimumWidth(available)
-            current.setMaximumWidth(available)
-            current.setGeometry(0, 0, available, self.stack.height())
+            current.setMinimumSize(0, 0)
+            current.setMaximumSize(MAX_WIDGET, MAX_WIDGET)
+            current.setGeometry(self.stack.contentsRect())
 
         for scroll in self.stack.findChildren(ViewportLockedScrollArea):
-            scroll.sync_page_width()
+            scroll.sync_page_geometry()
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
         super().resizeEvent(event)
@@ -231,7 +224,7 @@ class ResponsiveCinderWindow(CinderWindow):
         x = min(max(self.x(), available.left()), available.right() - width + 1)
         y = min(max(self.y(), available.top()), available.bottom() - height + 1)
         self.setGeometry(x, y, width, height)
-        self._sync_main_geometry()
+        QTimer.singleShot(0, self._sync_main_geometry)
 
     def _page_scroll(self) -> tuple[QScrollArea, QVBoxLayout]:
         scroll = ViewportLockedScrollArea()
@@ -244,22 +237,31 @@ class ResponsiveCinderWindow(CinderWindow):
             "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }"
         )
         page = QWidget()
-        page.setStyleSheet("background:transparent;")
+        page.setObjectName("ScrollPage")
+        page.setStyleSheet("QWidget#ScrollPage { background:transparent; }")
         page.setMinimumSize(0, 0)
-        page.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.MinimumExpanding)
+        page.setMaximumSize(MAX_WIDGET, MAX_WIDGET)
+        page.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         layout = QVBoxLayout(page)
         layout.setContentsMargins(6, 6, 8, 8)
         layout.setSpacing(12)
+        layout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
         scroll.setWidget(page)
         return scroll, layout
 
     def _build_overview(self) -> QScrollArea:
         scroll, layout = self._page_scroll()
+        scroll.setObjectName("OverviewScroll")
+        self.overview_scroll = scroll
+        self.overview_page = scroll.widget()
 
         routing = GlowCard("Routing", PURPLE)
+        routing.setObjectName("RoutingCard")
         routing.setMinimumWidth(0)
-        routing.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        routing.setMaximumWidth(MAX_WIDGET)
+        routing.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.routing_card = routing
         self.input_combo = DarkCombo()
         self.output_combo = DarkCombo()
         self.input_route_meter = SegmentMeter(GREEN)
@@ -275,10 +277,7 @@ class ResponsiveCinderWindow(CinderWindow):
             "Input Device", self.input_combo, self.input_route_meter, self.input_route_db
         )
         output_block = self._route_block(
-            "Processed Output",
-            self.output_combo,
-            self.output_route_meter,
-            self.output_route_db,
+            "Processed Output", self.output_combo, self.output_route_meter, self.output_route_db
         )
         flow = QLabel("━━  ✦  ━━")
         flow.setAlignment(Qt.AlignCenter)
@@ -312,7 +311,8 @@ class ResponsiveCinderWindow(CinderWindow):
 
         diagnostics = GlowCard("Diagnostics", PURPLE)
         diagnostics.setMinimumWidth(0)
-        diagnostics.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        diagnostics.setMaximumWidth(MAX_WIDGET)
+        diagnostics.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.diag_gpu = DiagnosticItem("GPU Detected")
         self.diag_backend = DiagnosticItem("Backend")
         self.diag_rtf = DiagnosticItem("RTF")
@@ -345,8 +345,29 @@ class ResponsiveCinderWindow(CinderWindow):
             f"border:1px solid {BORDER}; border-radius:11px; padding:10px;"
         )
         layout.addWidget(self.status_banner)
-        layout.addStretch(1)
         return scroll
+
+    def layout_measurements(self) -> dict[str, int]:
+        """Runtime geometry used by diagnostics and regression tests."""
+        scroll = getattr(self, "overview_scroll", None)
+        page = getattr(self, "overview_page", None)
+        routing = getattr(self, "routing_card", None)
+        return {
+            "window_width": self.width(),
+            "content_width": self._content_frame.width(),
+            "sidebar_right": self.sidebar.geometry().right(),
+            "stack_x": self.stack.x(),
+            "stack_width": self.stack.width(),
+            "scroll_x": scroll.x() if scroll else -1,
+            "scroll_y": scroll.y() if scroll else -1,
+            "viewport_width": scroll.viewport().width() if scroll else -1,
+            "page_x": page.x() if page else -1,
+            "page_y": page.y() if page else -1,
+            "page_width": page.width() if page else -1,
+            "routing_x": routing.x() if routing else -1,
+            "routing_y": routing.y() if routing else -1,
+            "routing_width": routing.width() if routing else -1,
+        }
 
     @staticmethod
     def _clean_device_name(choice: DeviceChoice) -> str:
@@ -354,10 +375,7 @@ class ResponsiveCinderWindow(CinderWindow):
         text = raw.replace("\r", " ").replace("\n", " ")
         text = text.replace("%0", " ").replace("%1", " ")
         text = re.sub(
-            r"@?System32\\drivers\\[^,;]+,[^;]+;?",
-            " ",
-            text,
-            flags=re.IGNORECASE,
+            r"@?System32\\drivers\\[^,;]+,[^;]+;?", " ", text, flags=re.IGNORECASE
         )
         text = re.sub(r"\s+", " ", text).strip(" ,·-")
         groups = [value.strip() for value in re.findall(r"\(([^()]*)\)", text)]
@@ -401,12 +419,7 @@ class ResponsiveCinderWindow(CinderWindow):
             "input_device_key": self._device_key(self.input_combo),
             "output_device_key": self._device_key(self.output_combo),
             **config.__dict__,
-            "geometry": [
-                geometry.x(),
-                geometry.y(),
-                geometry.width(),
-                geometry.height(),
-            ],
+            "geometry": [geometry.x(), geometry.y(), geometry.width(), geometry.height()],
         }
         try:
             self.settings_store.save(values)
