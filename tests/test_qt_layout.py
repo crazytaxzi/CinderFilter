@@ -65,12 +65,32 @@ def test_hidden_page_cannot_push_current_page_outside_window() -> None:
         - row.spacing()
     )
 
-    assert stack.x() == margins.left() + sidebar.width() + row.spacing()
-    assert stack.width() == expected
-    assert stack.geometry().right() <= root.contentsRect().right() - margins.right()
-    assert scroll.geometry() == stack.rect()
-    assert page.x() == 0
-    assert page.width() == scroll.viewport().width()
-    assert scroll.horizontalScrollBar().value() == 0
+    measurements = {
+        "window": root.width(),
+        "sidebar": sidebar.width(),
+        "stack_x": stack.x(),
+        "stack": stack.width(),
+        "expected_stack": expected,
+        "viewport": scroll.viewport().width(),
+        "page_x": page.x(),
+        "page": page.width(),
+        "hidden_minimum_requested": 2500,
+    }
+
+    assert stack.x() == margins.left() + sidebar.width() + row.spacing(), measurements
+    assert stack.width() == expected, measurements
+    assert stack.geometry().right() <= root.contentsRect().right() - margins.right(), measurements
+    assert scroll.geometry() == stack.rect(), measurements
+    assert page.x() == 0, measurements
+    assert page.width() == scroll.viewport().width(), measurements
+    assert scroll.horizontalScrollBar().value() == 0, measurements
 
     root.close()
+    return measurements
+
+
+if __name__ == "__main__":
+    result = test_hidden_page_cannot_push_current_page_outside_window()
+    print("CinderFilter Qt layout verification PASSED")
+    for key, value in result.items():
+        print(f"{key}: {value}")
