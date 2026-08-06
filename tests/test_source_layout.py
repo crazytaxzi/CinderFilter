@@ -13,7 +13,13 @@ def test_one_application_entrypoint() -> None:
 
 
 def test_runtime_has_no_tkinter_dependency() -> None:
-    for name in ("main.py", "cinderfilter_window.py", "cinderfilter_core.py", "voice_lock.py"):
+    for name in (
+        "main.py",
+        "cinderfilter_window.py",
+        "responsive_window.py",
+        "cinderfilter_core.py",
+        "voice_lock.py",
+    ):
         tree = ast.parse((ROOT / name).read_text(encoding="utf-8"), filename=name)
         imports = {
             alias.name
@@ -36,3 +42,13 @@ def test_ui_is_connected_not_mocked() -> None:
     assert "EngineMetrics" in source
     for fake in ("Shure SM7B", "Focusrite Scarlett", "NVIDIA RTX 4080"):
         assert fake not in source
+
+
+def test_main_launches_responsive_window() -> None:
+    main_source = (ROOT / "main.py").read_text(encoding="utf-8")
+    responsive = (ROOT / "responsive_window.py").read_text(encoding="utf-8")
+    assert "ResponsiveCinderWindow" in main_source
+    assert "class ReflowGrid" in responsive
+    assert "ScrollBarAlwaysOff" in responsive
+    assert "_fit_window_to_screen" in responsive
+    assert "_clean_device_name" in responsive
