@@ -1,23 +1,23 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtCore import QEasingCurve, QSize, Qt, QPropertyAnimation, QTimer
 from PySide6.QtWidgets import (
     QComboBox,
+    QGraphicsOpacityEffect,
     QGridLayout,
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QStackedWidget,
     QWidget,
 )
-
-from ui_components import FadeStack
 
 
 MAX_WIDGET = 16_777_215
 
 
-class FillFadeStack(FadeStack):
-    """Stack host that fills its layout slot and ignores hidden-page hints."""
+class FillFadeStack(QStackedWidget):
+    """Stack host with page-local fades and no stack-wide graphics effect."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -25,6 +25,10 @@ class FillFadeStack(FadeStack):
         self.setMaximumSize(MAX_WIDGET, MAX_WIDGET)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.currentChanged.connect(self._schedule_fit)
+        self._transition: QPropertyAnimation | None = None
+        self._transition_effect: QGraphicsOpacityEffect | None = None
+        self._transition_page: QWidget | None = None
+        self._target_index = -1
 
     def addWidget(self, widget: QWidget) -> int:  # noqa: N802 - Qt API
         widget.setMinimumSize(0, 0)
@@ -52,6 +56,70 @@ class FillFadeStack(FadeStack):
         current.setGeometry(self.contentsRect())
         current.updateGeometry()
 
+    def _detach_transition_effect(self) -> None:
+        animation = self._transition
+        self._transition = None
+        if animation is not None:
+            animation.stop()
+            animation.deleteLater()
+
+        page = self._transition_page
+        effect = self._transition_effect
+        self._transition_page = None
+        self._transition_effect = None
+        if page is not None and effect is not None and page.graphicsEffect() is effect:
+            page.setGraphicsEffect(None)
+
+    def _animate_page(
+        self,
+        page: QWidget,
+        start: float,
+        end: float,
+        finished,
+    ) -> None:
+        self._detach_transition_effect()
+        effect = QGraphicsOpacityEffect()
+        effect.setOpacity(start)
+        page.setGraphicsEffect(effect)
+        animation = QPropertyAnimation(effect, b"opacity", self)
+        animation.setDuration(105)
+        animation.setStartValue(start)
+        animation.setEndValue(end)
+        animation.setEasingCurve(QEasingCurve.InOutQuad)
+        animation.finished.connect(finished)
+        self._transition_page = page
+        self._transition_effect = effect
+        self._transition = animation
+        animation.start()
+
+    def fadeTo(self, index: int) -> None:  # noqa: N802 - existing app API
+        if index < 0 or index >= self.count() or index == self.currentIndex():
+            return
+        current = self.currentWidget()
+        if current is None:
+            self.setCurrentIndex(index)
+            self.fit_current()
+            return
+
+        self._target_index = index
+        self._animate_page(current, 1.0, 0.0, self._finish_fade_out)
+
+    def _finish_fade_out(self) -> None:
+        target = self._target_index
+        self._detach_transition_effect()
+        if target < 0 or target >= self.count():
+            return
+        self.setCurrentIndex(target)
+        self.fit_current()
+        incoming = self.currentWidget()
+        if incoming is None:
+            return
+        self._animate_page(incoming, 0.0, 1.0, self._finish_fade_in)
+
+    def _finish_fade_in(self) -> None:
+        self._detach_transition_effect()
+        self.fit_current()
+
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
         super().resizeEvent(event)
         self.fit_current()
@@ -62,8 +130,6 @@ class ViewportLockedScrollArea(QScrollArea):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        # widgetResizable=True can center a page whose size hint is smaller than
-        # the viewport. We own the page geometry instead.
         self.setWidgetResizable(False)
         self.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -106,8 +172,6 @@ class ViewportLockedScrollArea(QScrollArea):
         target_height = max(viewport.height(), page.sizeHint().height())
         page.resize(target_width, max(1, target_height))
 
-        # QScrollArea owns vertical movement. The explicit alignment and exact
-        # width guarantee that no horizontal or vertical centering can occur.
         self.horizontalScrollBar().setRange(0, 0)
         self.horizontalScrollBar().setValue(0)
         if self.verticalScrollBar().value() == 0:
@@ -117,7 +181,6 @@ class ViewportLockedScrollArea(QScrollArea):
         page.updateGeometry()
         viewport.update()
 
-    # Backward-compatible name used by existing callers/tests.
     def sync_page_width(self) -> None:
         self.sync_page_geometry()
 
