@@ -49,6 +49,16 @@ def test_main_launches_responsive_window() -> None:
     responsive = (ROOT / "responsive_window.py").read_text(encoding="utf-8")
     assert "ResponsiveCinderWindow" in main_source
     assert "class ReflowGrid" in responsive
-    assert "ScrollBarAlwaysOff" in responsive
+    assert "class RouteReflow" in responsive
     assert "_fit_window_to_screen" in responsive
     assert "_clean_device_name" in responsive
+
+
+def test_responsive_page_is_locked_to_viewport_width() -> None:
+    responsive = (ROOT / "responsive_window.py").read_text(encoding="utf-8")
+    assert "class ViewportLockedScrollArea" in responsive
+    assert "target = max(1, self.viewport().width())" in responsive
+    assert "page.setMaximumWidth(target)" in responsive
+    assert "self.horizontalScrollBar().setValue(0)" in responsive
+    assert "QLayout.SizeConstraint.SetNoConstraint" in responsive
+    assert "QLayout.SizeConstraint.SetMinimumSize" not in responsive
