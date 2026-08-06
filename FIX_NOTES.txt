@@ -1,8 +1,0 @@
-CinderFilter DeepFilterNet thread-affinity fix
-
-The Rust/PyO3 DeepFilterNetRealtime object is now created, used, and closed
-entirely on the CinderFilter-AI worker thread. This fixes the panic:
-"DeepFilterNetRealtime is unsendable, but sent to another thread".
-
-Extract these files over C:\Projects\CinderFilter and allow overwrite, then
-run START_CINDERFILTER.bat. The existing .venv folder can stay in place.

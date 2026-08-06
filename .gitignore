@@ -1,5 +1,11 @@
 .venv/
+.venv_cuda_noise/
 __pycache__/
 *.py[cod]
+*.log
 models/
 profiles/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -9,10 +9,6 @@ from pathlib import Path
 from typing import Callable
 
 import numpy as np
-from deepfilternet_rs import DeepFilterNetRealtime
-
-import cinderfilter_threadsafe  # applies the PyO3 thread-affinity hotfix
-import cinderfilter as base
 
 SAMPLE_RATE = 48_000
 VOICE_RATE = 16_000
@@ -24,7 +20,7 @@ PROFILE_META_PATH = PROFILE_DIR / "voice_profile.json"
 
 
 class VoiceLockService:
-    """Speaker embedding worker isolated from the live audio thread."""
+    """Speaker embedding service isolated from the real-time audio controller."""
 
     MODEL_SOURCE = "speechbrain/spkrec-ecapa-voxceleb"
 
@@ -82,7 +78,9 @@ class VoiceLockService:
             if self._thread and self._thread.is_alive():
                 return
             self._thread = threading.Thread(
-                target=self._worker, name="CinderFilter-VoiceLock", daemon=True
+                target=self._worker,
+                name="CinderFilter-VoiceLock",
+                daemon=True,
             )
             self._thread.start()
 
@@ -123,7 +121,7 @@ class VoiceLockService:
                 else:
                     self._verify(model, torch, audio)
             except BaseException as exc:
-                self.on_status(f"Voice Lock error: {exc}")
+                self.on_status(f"Voice Lock error: {type(exc).__name__}: {exc}")
                 self.on_result(None)
                 self._verify_pending.clear()
 
@@ -182,9 +180,9 @@ class VoiceLockService:
         usable = audio.size - audio.size % 3
         if usable <= 0:
             return np.empty(0, np.float32)
-        audio = audio[:usable].reshape(-1, 3).mean(axis=1)
-        audio -= float(np.mean(audio))
-        return np.ascontiguousarray(audio, dtype=np.float32)
+        downsampled = audio[:usable].reshape(-1, 3).mean(axis=1)
+        downsampled -= float(np.mean(downsampled))
+        return np.ascontiguousarray(downsampled, dtype=np.float32)
 
     @classmethod
     def _embed(cls, model, torch, audio: np.ndarray) -> np.ndarray:
@@ -224,146 +222,3 @@ class VoiceLockService:
         except Exception:
             pass
         return None
-
-
-class VoiceLockedAudioEngine(base.AudioEngine):
-    """Thread-safe DeepFilterNet engine plus side-channel speaker gating."""
-
-    THRESHOLDS = {"Conservative": 0.24, "Balanced": 0.30, "Aggressive": 0.36}
-
-    def __init__(self, voice_service: VoiceLockService, on_status, on_metrics) -> None:
-        super().__init__(on_status, on_metrics)
-        self.voice_service = voice_service
-        self._voice_enabled = threading.Event()
-        self._voice_guard = threading.Lock()
-        self._voice_buffer = np.empty(0, np.float32)
-        self._voice_since_submit = 0
-        self._voice_similarity: float | None = None
-        self._voice_target_gain = 1.0
-        self._voice_current_gain = 1.0
-        self._voice_reduction_db = 24.0
-        self._voice_strictness = "Balanced"
-
-    def configure_voice_lock(self, enabled: bool, reduction_db: float, strictness: str) -> None:
-        with self._voice_guard:
-            self._voice_reduction_db = max(0.0, min(48.0, float(reduction_db)))
-            self._voice_strictness = strictness
-            if not enabled:
-                self._voice_target_gain = 1.0
-                self._voice_similarity = None
-        self._voice_enabled.set() if enabled else self._voice_enabled.clear()
-
-    def update_voice_similarity(self, similarity: float | None) -> None:
-        with self._voice_guard:
-            self._voice_similarity = similarity
-            if not self._voice_enabled.is_set() or similarity is None:
-                self._voice_target_gain = 1.0
-                return
-            threshold = self.THRESHOLDS.get(self._voice_strictness, 0.30)
-            if similarity >= threshold:
-                gain = 1.0
-            elif similarity >= threshold - 0.055:
-                gain = 0.72  # protect uncertain/overlapping target speech
-            else:
-                gain = 10.0 ** (-self._voice_reduction_db / 20.0)
-            self._voice_target_gain = float(np.clip(gain, 0.003, 1.0))
-
-    def start(self, input_device: int, output_device: int, strength: str) -> None:
-        self._voice_buffer = np.empty(0, np.float32)
-        self._voice_since_submit = 0
-        self._voice_current_gain = 1.0
-        super().start(input_device, output_device, strength)
-
-    def _process_loop(self) -> None:
-        processor: DeepFilterNetRealtime | None = None
-        last_metrics = 0.0
-        try:
-            processor = DeepFilterNetRealtime(
-                model_path=None,
-                atten_lim=self._atten_lim,
-                log_level="warn",
-                compensate_delay=False,
-                post_filter_beta=0.0,
-            )
-            if int(processor.sample_rate) != SAMPLE_RATE:
-                raise RuntimeError(
-                    f"Model requires {processor.sample_rate} Hz, expected {SAMPLE_RATE} Hz."
-                )
-            self._model_ready.set()
-            while self._running.is_set():
-                try:
-                    block = self._input_queue.get(timeout=0.1)
-                except queue.Empty:
-                    continue
-                if self._bypass.is_set():
-                    processed = block
-                else:
-                    processed = np.asarray(
-                        processor.process_chunk(block), dtype=np.float32
-                    ).reshape(-1)
-                if processed.size == 0:
-                    continue
-                processed = np.clip(processed, -1.0, 1.0)
-                self._feed_voice_lock(processed)
-                processed = self._apply_voice_gain(processed)
-                self._output_level = self._peak_db(processed)
-                try:
-                    self._output_queue.put_nowait(processed)
-                except queue.Full:
-                    try:
-                        self._output_queue.get_nowait()
-                        self._output_queue.put_nowait(processed)
-                    except queue.Empty:
-                        pass
-                now = time.monotonic()
-                if now - last_metrics >= 0.10:
-                    with self._voice_guard:
-                        gain = self._voice_current_gain
-                        similarity = self._voice_similarity
-                    self.on_metrics(
-                        self._input_level,
-                        self._output_level,
-                        self._dropped_input,
-                        self._output_underruns,
-                        gain,
-                        similarity,
-                    )
-                    last_metrics = now
-        except BaseException as exc:
-            self._worker_error = exc
-            self.on_status(f"AI processing error: {exc}")
-            self._running.clear()
-        finally:
-            if processor is not None:
-                try:
-                    processor.close()
-                except BaseException:
-                    pass
-            self._model_ready.set()
-
-    def _feed_voice_lock(self, audio: np.ndarray) -> None:
-        if not self._voice_enabled.is_set() or not self.voice_service.has_profile:
-            return
-        self._voice_buffer = np.concatenate((self._voice_buffer, audio))
-        limit = int(SAMPLE_RATE * 1.8)
-        if self._voice_buffer.size > limit:
-            self._voice_buffer = self._voice_buffer[-limit:]
-        self._voice_since_submit += audio.size
-        if (
-            self._voice_buffer.size >= int(SAMPLE_RATE * 1.5)
-            and self._voice_since_submit >= int(SAMPLE_RATE * 0.50)
-            and self.voice_service.verify(self._voice_buffer)
-        ):
-            self._voice_since_submit = 0
-
-    def _apply_voice_gain(self, audio: np.ndarray) -> np.ndarray:
-        with self._voice_guard:
-            current = self._voice_current_gain
-            target = self._voice_target_gain if self._voice_enabled.is_set() else 1.0
-        duration = audio.size / SAMPLE_RATE
-        tau = 0.12 if target < current else 0.34
-        new = current + (target - current) * (1.0 - math.exp(-duration / tau))
-        ramp = np.linspace(current, new, audio.size, dtype=np.float32)
-        with self._voice_guard:
-            self._voice_current_gain = float(new)
-        return np.asarray(audio * ramp, dtype=np.float32)

@@ -1,65 +1,79 @@
+param([switch]$Console)
+
 $ErrorActionPreference = "Stop"
-Set-Location $PSScriptRoot
+$AppRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+Set-Location -LiteralPath $AppRoot
+$Host.UI.RawUI.WindowTitle = "CinderFilter Setup"
 
-function Find-Python312 {
-    $candidates = @(
-        "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe",
-        "$env:ProgramFiles\Python312\python.exe"
-    )
-
-    foreach ($candidate in $candidates) {
-        if (Test-Path $candidate) { return $candidate }
+function Find-Python {
+    $py = Get-Command py.exe -ErrorAction SilentlyContinue
+    if ($py) {
+        foreach ($version in @("-3.12", "-3.11")) {
+            & $py.Source $version -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" 2>$null
+            if ($LASTEXITCODE -eq 0) { return @($py.Source, $version) }
+        }
     }
-
-    $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
-    if ($pythonCommand) {
-        try {
-            $version = & $pythonCommand.Source -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
-            if ($version -eq "3.12") { return $pythonCommand.Source }
-        } catch { }
+    $python = Get-Command python.exe -ErrorAction SilentlyContinue
+    if ($python) {
+        & $python.Source -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" 2>$null
+        if ($LASTEXITCODE -eq 0) { return @($python.Source) }
     }
-
-    return $null
+    throw "Python 3.11 or newer is required. Install Python from python.org, then run START_CINDERFILTER.bat again."
 }
 
-$python312 = Find-Python312
-if (-not $python312) {
-    $winget = Get-Command winget -ErrorAction SilentlyContinue
-    if (-not $winget) {
-        throw "Python 3.12 is required and winget is unavailable. Install Python 3.12 x64, then run this file again."
-    }
-
-    Write-Host "Installing Python 3.12 for CinderFilter..." -ForegroundColor Cyan
-    & $winget.Source install --exact --id Python.Python.3.12 --scope user `
-        --accept-package-agreements --accept-source-agreements --silent
-    if ($LASTEXITCODE -ne 0) {
-        throw "Python installation failed with exit code $LASTEXITCODE."
-    }
-    $python312 = Find-Python312
-    if (-not $python312) {
-        throw "Python 3.12 installed, but its executable could not be located. Reopen this launcher."
-    }
+$venv = Join-Path $AppRoot ".venv"
+$python = Join-Path $venv "Scripts\python.exe"
+$pythonw = Join-Path $venv "Scripts\pythonw.exe"
+if (-not (Test-Path -LiteralPath $python)) {
+    $found = Find-Python
+    $command = $found[0]
+    $prefix = @()
+    if ($found.Count -gt 1) { $prefix = @($found[1]) }
+    Write-Host "Creating CinderFilter environment..." -ForegroundColor Cyan
+    & $command @prefix -m venv $venv
+    if ($LASTEXITCODE -ne 0) { throw "Could not create .venv." }
 }
 
-$venvPython = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
-if (-not (Test-Path $venvPython)) {
-    Write-Host "Creating the CinderFilter environment..." -ForegroundColor Cyan
-    & $python312 -m venv .venv
+$requirements = Join-Path $AppRoot "requirements.txt"
+$marker = Join-Path $venv ".cinderfilter-requirements.sha256"
+$hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $requirements).Hash
+$needsInstall = -not (Test-Path -LiteralPath $marker)
+if (-not $needsInstall) {
+    $needsInstall = ((Get-Content -LiteralPath $marker -Raw).Trim() -ne $hash)
 }
 
-$requirementsHash = (Get-FileHash "$PSScriptRoot\requirements.txt" -Algorithm SHA256).Hash
-$marker = Join-Path $PSScriptRoot ".venv\.requirements-sha256"
-$installedHash = if (Test-Path $marker) { (Get-Content $marker -Raw).Trim() } else { "" }
+& $python -c "import PySide6, numpy, sounddevice, deepfilternet_rs, speechbrain, psutil" 2>$null
+if ($LASTEXITCODE -ne 0) { $needsInstall = $true }
 
-if ($installedHash -ne $requirementsHash) {
-    Write-Host "Installing CinderFilter AI and Voice Lock runtimes..." -ForegroundColor Cyan
-    & $venvPython -m pip install --upgrade pip
-    & $venvPython -m pip install --requirement "$PSScriptRoot\requirements.txt"
-    if ($LASTEXITCODE -ne 0) {
-        throw "Dependency installation failed."
+& $python -c "import torch; raise SystemExit(0 if torch.__version__.startswith('2.11.') and torch.cuda.is_available() else 1)" 2>$null
+$torchReady = ($LASTEXITCODE -eq 0)
+if (-not $torchReady) {
+    $nvidia = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue
+    if ($nvidia) {
+        Write-Host "Installing PyTorch 2.11 CUDA 12.8 runtime..." -ForegroundColor Cyan
+        & $python -m pip install --upgrade --disable-pip-version-check `
+            torch==2.11.0 torchaudio==2.11.0 `
+            --index-url https://download.pytorch.org/whl/cu128
+    } else {
+        Write-Host "NVIDIA driver not detected; installing the CPU PyTorch runtime." -ForegroundColor Yellow
+        & $python -m pip install --upgrade --disable-pip-version-check torch==2.11.0 torchaudio==2.11.0
     }
-    Set-Content -Path $marker -Value $requirementsHash -NoNewline
+    if ($LASTEXITCODE -ne 0) { throw "PyTorch installation failed." }
 }
 
-Write-Host "Launching CinderFilter..." -ForegroundColor Green
-& $venvPython "$PSScriptRoot\cinderfilter_voice_lock.py"
+if ($needsInstall) {
+    Write-Host "Installing or updating CinderFilter dependencies..." -ForegroundColor Cyan
+    & $python -m pip install --upgrade --disable-pip-version-check -r $requirements
+    if ($LASTEXITCODE -ne 0) { throw "CinderFilter dependency installation failed." }
+    Set-Content -LiteralPath $marker -Value $hash -Encoding ASCII
+}
+
+& $python -m pip check
+if ($LASTEXITCODE -ne 0) { throw "The main CinderFilter environment has dependency conflicts." }
+
+if ($Console) {
+    & $python (Join-Path $AppRoot "main.py")
+    exit $LASTEXITCODE
+}
+if (-not (Test-Path -LiteralPath $pythonw)) { $pythonw = $python }
+Start-Process -FilePath $pythonw -ArgumentList ('"' + (Join-Path $AppRoot "main.py") + '"') -WorkingDirectory $AppRoot
