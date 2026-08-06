@@ -96,8 +96,8 @@ if (-not (Test-Path $venvPython)) {
     if ($LASTEXITCODE -ne 0) { throw "Could not create the CUDA noise-engine virtual environment." }
 }
 
-Write-Host "Updating pip..." -ForegroundColor Cyan
-& $venvPython -m pip install --upgrade pip setuptools wheel
+Write-Host "Updating pip and setuptools..." -ForegroundColor Cyan
+& $venvPython -m pip install --upgrade pip setuptools
 if ($LASTEXITCODE -ne 0) { throw "pip update failed." }
 
 Write-Host ""
@@ -118,9 +118,14 @@ if ($LASTEXITCODE -ne 0) { throw "DeepFilterNet installation failed." }
     "sympy>=1.6" "typing-extensions>=4.10,<5"
 if ($LASTEXITCODE -ne 0) { throw "DeepFilterNet support dependency installation failed." }
 
-Write-Host "Checking DeepFilterNet dependency compatibility..." -ForegroundColor Cyan
+Write-Host "Removing the optional wheel CLI package..." -ForegroundColor Cyan
+Write-Host "It is not needed to run CinderFilter and conflicts with DeepFilterNet's packaging pin." -ForegroundColor DarkGray
+& $venvPython -m pip uninstall -y wheel
+if ($LASTEXITCODE -ne 0) { throw "Could not remove the conflicting wheel package." }
+
+Write-Host "Checking DeepFilterNet runtime compatibility..." -ForegroundColor Cyan
 & $venvPython -m pip check
-if ($LASTEXITCODE -ne 0) { throw "The CUDA noise environment still has incompatible packages." }
+if ($LASTEXITCODE -ne 0) { throw "The CUDA noise environment still has incompatible runtime packages." }
 
 Write-Host ""
 Write-Host "Verifying CUDA and preloading DeepFilterNet3..." -ForegroundColor Cyan
