@@ -11,8 +11,8 @@ if str(ROOT) not in sys.path:
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
-import device_catalog
 import main
+import stable_output_app
 
 
 def _git_head() -> str:
@@ -33,7 +33,7 @@ def _effect_name(widget) -> str:
 
 def main_diag() -> int:
     app = QApplication.instance() or QApplication([])
-    window = device_catalog.CinderFilterWindow()
+    window = stable_output_app.CinderFilterWindow()
     window.show()
     attempts = {"count": 0}
 
@@ -45,8 +45,10 @@ def main_diag() -> int:
         print("CinderFilter layout diagnostic")
         print("GIT HEAD:", _git_head())
         print("MAIN FILE:", Path(main.__file__).resolve())
-        print("WINDOW FILE:", Path(device_catalog.__file__).resolve())
+        print("WINDOW FILE:", Path(stable_output_app.__file__).resolve())
         print("WINDOW CLASS:", type(window).__name__)
+        print("ENGINE CLASS:", type(window.engine).__name__)
+        print("OUTPUT LEVELING:", window.engine.output_leveling_preset)
         print("STACK GRAPHICS EFFECT:", _effect_name(window.stack))
         print("PAGE GRAPHICS EFFECT:", _effect_name(window.stack.currentWidget()))
         print("GPU DETECTION COMPLETE:", window._gpu_status is not None)
