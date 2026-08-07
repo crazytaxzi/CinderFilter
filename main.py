@@ -3,7 +3,7 @@ import sys
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
 
-from device_catalog import CinderFilterWindow
+from stable_output_app import CinderFilterWindow
 
 
 def main():
