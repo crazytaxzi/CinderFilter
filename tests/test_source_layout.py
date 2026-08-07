@@ -10,15 +10,21 @@ def test_single_launcher_and_window() -> None:
     assert list(ROOT.glob("START_CINDERFILTER*.bat")) == [ROOT / "START_CINDERFILTER.bat"]
     assert (ROOT / "cinderfilter_app.py").exists()
     assert (ROOT / "device_catalog.py").exists()
+    assert (ROOT / "stable_output_app.py").exists()
+    assert (ROOT / "stable_audio_core.py").exists()
+    assert (ROOT / "output_leveler.py").exists()
     assert not (ROOT / "responsive_window.py").exists()
     main = (ROOT / "main.py").read_text(encoding="utf-8")
-    assert "from device_catalog import CinderFilterWindow" in main
+    assert "from stable_output_app import CinderFilterWindow" in main
     assert "window = CinderFilterWindow()" in main
 
 
 def test_runtime_has_no_tkinter_dependency() -> None:
     for name in (
         "main.py",
+        "stable_output_app.py",
+        "stable_audio_core.py",
+        "output_leveler.py",
         "device_catalog.py",
         "cinderfilter_app.py",
         "cinderfilter_window.py",
@@ -63,6 +69,21 @@ def test_device_catalog_filters_and_deduplicates() -> None:
     assert "input_api_filter" in catalog
     assert "duplicate endpoint aliases are hidden" in catalog
     assert "Qt.ToolTipRole" in catalog
+
+
+def test_final_output_leveler_is_connected() -> None:
+    app = (ROOT / "stable_output_app.py").read_text(encoding="utf-8")
+    core = (ROOT / "stable_audio_core.py").read_text(encoding="utf-8")
+    leveler = (ROOT / "output_leveler.py").read_text(encoding="utf-8")
+    assert "StabilizedCinderFilterEngine" in app
+    assert "Final Output Leveling" in app
+    assert "output_leveling" in app
+    assert "self.output_leveler.process(mono)" in core
+    assert "if self._bypass.is_set()" in core
+    assert '"Stable": LevelingPreset' in leveler
+    assert "target_compressor_gain" in leveler
+    assert "required_limiter" in leveler
+    assert "np.clip(output, -ceiling, ceiling)" in leveler
 
 
 def test_real_engine_is_connected() -> None:
